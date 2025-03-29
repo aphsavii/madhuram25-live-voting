@@ -3,7 +3,7 @@ import axios from 'axios';
 const baseUrl = window.location.origin.includes('localhost') ? 'http://localhost:3000' : 'https://api.madhuramsliet.com';
 
 const axiosInstance = axios.create({
-    baseURL: 'http://localhost:3000',
+    baseURL: baseUrl,
     timeout: 5000,
 });
 
