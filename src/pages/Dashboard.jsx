@@ -14,7 +14,9 @@ const teamColors = {
   'Delta': 'bg-green-500'
 };
 
-const socket = io("http://localhost:3000", {
+const serverUrl = window.location.origin.includes('localhost') ? 'http://localhost:3000' : 'https://api.madhuramsliet.com';
+
+const socket = io(serverUrl, {
   withCredentials: true, // Allow cookies/headers
   transports: ["websocket", "polling"], // Ensure transport compatibility
   auth: {
