@@ -4,7 +4,13 @@ class DasboardService {
     async getPerfromers(eventId) {
         // Get all performers
         try {
-            const response = await axiosInstance.get('events/' + eventId + '/performers');
+            const response = await axiosInstance.get('events/' + eventId + '/performers',
+                {
+                    headers:{
+                        Authorization:localStorage.getItem('token')
+                    }
+                }
+            );
             return response.data;
         } catch (error) {
             return Promise.reject(error);

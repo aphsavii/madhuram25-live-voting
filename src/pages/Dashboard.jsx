@@ -31,8 +31,7 @@ const Dashboard = () => {
   const [totalVotes, setTotalVotes] = useState(0);
   const navigate = useNavigate();
   const [eventsData, setEventsData] = useState([]);
-  const [performersData, setPerformersData] = useState({});
-
+  const [votedPerformance, setVotedPerformance] = useState(null);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -69,12 +68,14 @@ const Dashboard = () => {
       dashboardService.getPerfromers(selectedEvent).then((data) => {
         console.log(data);
         setPerformers(data.data);
+        const votedId = data.votedId;
+        setVotedPerformance(votedId);
       });
+      
 
       const total = performers.reduce((sum, performer) => sum + performer.votes, 0);
       setTotalVotes(total);
  
-
       // setPerformers(performersData[selectedEvent]);
       // const total = performersData[selectedEvent].reduce((sum, performer) => sum + performer.votes, 0);
       // setTotalVotes(total);
@@ -100,7 +101,6 @@ const Dashboard = () => {
       performanceId: performerId,
       eventId: selectedEvent
     });
-    localStorage.setItem("voted" + selectedEvent, performerId);
   }
 
   socket.on("vote:" + selectedEvent, (data) => {
@@ -245,7 +245,7 @@ const Dashboard = () => {
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.5, delay: index * 0.1 }}
-                    className={`relative bg-gray-800 rounded-xl overflow-hidden border border-gray-700 hover:border-cyan-400 transition-all duration-300 ${localStorage.getItem("voted" + selectedEvent) == performer.id ? 'border-cyan-400' : ''}`}
+                    className={`relative bg-gray-800 rounded-xl overflow-hidden border  hover:border-cyan-400 transition-all duration-300 ${votedPerformance == performer.id ? 'border-cyan-400' : 'border-gray-700'}`}
                   >
                     <div className={`absolute top-0 left-0 px-3 py-1 text-sm font-semibold ${teamColors[performer.team]} text-white`}>
                       Team {performer.team}
@@ -311,7 +311,7 @@ const Dashboard = () => {
                           votePerformer(performer.id);
                         }}
                       >
-                        {localStorage.getItem("voted" + selectedEvent) == performer.id ? 'Voted' : 'Vote'}
+                        {votedPerformance == performer.id ? 'Voted' : 'Vote'}
                       </motion.button>
                     </div>
                   </motion.div>
