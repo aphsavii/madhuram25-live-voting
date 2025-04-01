@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSearchParams } from 'react-router-dom';
-// import { performersData, eventsData } from '@/constants';
 import { io } from 'socket.io-client';
 import { useNavigate } from 'react-router-dom';
 import dashboardService from '@/api/services/dashboard.service';
@@ -17,8 +16,8 @@ const teamColors = {
 const serverUrl = window.location.origin.includes('localhost') ? 'http://localhost:3000' : 'https://api.madhuramsliet.com';
 
 const socket = io(serverUrl, {
-  withCredentials: true, // Allow cookies/headers
-  transports: ["websocket", "polling"], // Ensure transport compatibility
+  withCredentials: true,
+  transports: ["websocket", "polling"],
   auth: {
     token: localStorage.getItem("token")
   }
@@ -32,6 +31,11 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const [eventsData, setEventsData] = useState([]);
   const [votedPerformance, setVotedPerformance] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isjudge, setIsJudge] = useState(false);
+  const [eventsVotingEnabled, setEventsVotingEnabled] = useState({});
+  const [judgeScores, setJudgeScores] = useState({});
+  const [lockedScores, setLockedScores] = useState({});
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -50,35 +54,49 @@ const Dashboard = () => {
     });
 
     const data = dashboardService.getEvents().then((data) => {
-      console.log(data);
       setEventsData(data.data);
+      setIsAdmin(data.isAdmin);
+      setIsJudge(data.isJudge);
+      data.data.forEach(event => {
+        setEventsVotingEnabled(prev => ({
+          ...prev,
+          [event.id]: event.isVotingAllowed
+        }));
+      });
     });
-
-
-
-
     return () => {
       socket.disconnect(); // Cleanup on unmount
     };
   }, []);
 
+  const toggleAcceptVotings = (eventId) => {
+    dashboardService.toggleAcceptVoting(eventId).then((data) => {
+      console.log(data);
+    });
+  }
+
+
 
   useEffect(() => {
     if (selectedEvent) {
       dashboardService.getPerfromers(selectedEvent).then((data) => {
-        console.log(data);
         setPerformers(data.data);
         const votedId = data.votedId;
         setVotedPerformance(votedId);
+
+        // Initialize judge scores for all performers to 5 (middle value)
+        const initialScores = {};
+        const initialLocked = {};
+        data.data.forEach(performer => {
+          initialScores[performer.id] = data.judgeScores[performer.id] || 5;
+          initialLocked[performer.id] = data.judgeScores[performer.id] !== undefined;
+        });
+        setJudgeScores(initialScores);
+        setLockedScores(initialLocked);
       });
-      
 
       const total = performers.reduce((sum, performer) => sum + performer.votes, 0);
       setTotalVotes(total);
- 
-      // setPerformers(performersData[selectedEvent]);
-      // const total = performersData[selectedEvent].reduce((sum, performer) => sum + performer.votes, 0);
-      // setTotalVotes(total);
     }
   }, [selectedEvent]);
 
@@ -96,23 +114,59 @@ const Dashboard = () => {
   };
 
   const votePerformer = (performerId) => {
-    if (localStorage.getItem("voted" + selectedEvent)) return;
+    if (votedPerformance) return;
+    if (!eventsVotingEnabled[selectedEvent] && !isjudge) return;
     socket.emit("vote", {
       performanceId: performerId,
       eventId: selectedEvent
     });
   }
 
-  socket.on("vote:" + selectedEvent, (data) => {
-    const performanceId = data.performanceId;
-    const votes = data.votes;
-    console.log("data from server", data);
-    setPerformers(prev =>
-      prev.map(p => p.id === performanceId ?
-        { ...p, votes } : p
-      )
-    );
-  });
+  const submitJudgeScore = async (performerId) => {
+    // Only allow submission if the score isn't locked
+    if (lockedScores[performerId]) return;
+
+    // Here you would add the API call to submit the judge's score
+    console.log(`Submitting score ${judgeScores[performerId]} for performer ${performerId}`);
+
+    await dashboardService.submitJudgeScore(selectedEvent, performerId, judgeScores[performerId]);
+
+    // Lock the score after submission
+    setLockedScores(prev => ({
+      ...prev,
+      [performerId]: true
+    }));
+  }
+
+  const handleScoreChange = (performerId, value) => {
+    // Only allow changes if the score isn't locked
+    if (!lockedScores[performerId]) {
+      setJudgeScores(prev => ({
+        ...prev,
+        [performerId]: value
+      }));
+    }
+  }
+
+  const publishResults = async () => {
+    await dashboardService.publishResults(selectedEvent);
+  }
+
+  useEffect(() => {
+    socket.on("vote:" + selectedEvent, (data) => {
+      const performanceId = +data.performanceId;
+      const votes = +data.votes;
+      console.log('votes', data);
+      setPerformers(prev =>
+        prev.map(p => p.id === performanceId ?
+          { ...p, votes } : p
+        )
+      );
+      // setVotedPerformance(performanceId);
+    });
+  }, []);
+
+
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4 md:p-8">
@@ -147,7 +201,8 @@ const Dashboard = () => {
             animate={{ opacity: 1 }}
             transition={{ duration: 0.5, delay: 0.7 }}
           >
-            {selectedEvent ? 'Vote for your favorite performer' : 'Select a performance category'}
+            {selectedEvent ? (isjudge ? 'Score the performances' : 'Vote for your favorite performer') : 'Select a performance category'}
+            {selectedEvent && !eventsVotingEnabled[selectedEvent] && !isjudge && (<span className='text-red-600 block mt-5 text-sm lg:text-xl '> We are not accepting votes for this event currently...</span>)}
           </motion.p>
         </header>
 
@@ -176,13 +231,12 @@ const Dashboard = () => {
                   }}
                   onClick={() => {
                     console.log(event.id);
-                    setSearchParams('event', event.id.toString());
+                    setSearchParams({ event: event.id.toString() });
                     setSelectedEvent(event.id);
-                  }
-                  }
+                  }}
                   className="relative overflow-hidden bg-gray-800 bg-opacity-50 backdrop-blur-lg rounded-xl cursor-pointer border border-gray-700 hover:border-cyan-400 transition-colors duration-300"
                 >
-                  <div className={`absolute inset-0 bg-gradient-to-br ${event.color} opacity-10`}></div>
+                  <div className={`absolute insetisVotingEnabled-0 bg-gradient-to-br ${event.color} opacity-10`}></div>
                   <motion.div
                     className="absolute -inset-1 bg-gradient-to-r from-transparent via-cyan-400 to-transparent opacity-30"
                     animate={{
@@ -196,6 +250,26 @@ const Dashboard = () => {
                     }}
                   />
                   <div className="p-8 text-center relative z-10">
+                    {isAdmin && (
+                      <div
+                        className="absolute top-2 right-2"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleAcceptVotings(event.id);
+                          setEventsVotingEnabled(prev => ({
+                            ...prev,
+                            [event.id]: !prev[event.id]
+                          }));
+                        }}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <span className="text-xs text-gray-300">Voting</span>
+                          <div className={`w-12 h-6 flex items-center rounded-full p-1 cursor-pointer ${eventsVotingEnabled[event.id] ? 'bg-cyan-400' : 'bg-gray-700'}`}>
+                            <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-300 ${eventsVotingEnabled[event.id] ? 'translate-x-6' : 'translate-x-0'}`}></div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     <span className="text-5xl mb-4 inline-block">{event.icon}</span>
                     <h2 className="text-2xl font-bold mb-2">{event.name}</h2>
                     <p className="text-gray-300">Vote for your favorite {event.name.toLowerCase()} performers</p>
@@ -224,7 +298,10 @@ const Dashboard = () => {
                 className="mb-8 flex items-center"
               >
                 <button
-                  onClick={() => setSelectedEvent(null)}
+                  onClick={() => {
+                    setSelectedEvent(null);
+                    setSearchParams({});
+                  }}
                   className="flex items-center space-x-2 text-cyan-400 hover:text-cyan-300 transition-colors"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-arrow-left">
@@ -288,31 +365,80 @@ const Dashboard = () => {
 
                       <h3 className="text-xl font-bold text-center mb-2">{performer.name}</h3>
 
-                      <div className="mt-6">
-                        <div className="flex justify-between mb-1">
-                          <span className="text-gray-300 text-sm">Vote share</span>
-                          <span className="font-semibold text-sm">{getPercentage(performer.votes)}%</span>
-                        </div>
-                        <div className="w-full bg-gray-700 rounded-full h-2.5 mb-4 overflow-hidden">
-                          <motion.div
-                            className="h-full bg-gradient-to-r from-cyan-400 to-purple-500 rounded-full"
-                            initial={{ width: 0 }}
-                            animate={{ width: `${getPercentage(performer.votes)}%` }}
-                            transition={{ duration: 1, delay: index * 0.1 + 0.2 }}
+                      {/* Judge-specific scoring UI */}
+                      {isjudge && (
+                        <div className="mt-4">
+                          <div className="flex justify-between mb-1">
+                            <span className="text-gray-300 text-sm">Score: {judgeScores[performer.id]}</span>
+                            <span className={`text-sm font-semibold ${lockedScores[performer.id] ? 'text-cyan-400' : 'text-gray-400'}`}>
+                              {lockedScores[performer.id] ? 'Locked' : 'Unlocked'}
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="1"
+                            max="10"
+                            step="1"
+                            value={judgeScores[performer.id]}
+                            onChange={(e) => handleScoreChange(performer.id, parseInt(e.target.value))}
+                            disabled={lockedScores[performer.id]}
+                            className={`w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500 ${lockedScores[performer.id] ? 'opacity-50' : ''}`}
                           />
+                          <div className="flex justify-between text-xs text-gray-400 mt-1 px-1">
+                            <span>1</span>
+                            <span>2</span>
+                            <span>3</span>
+                            <span>4</span>
+                            <span>5</span>
+                            <span>6</span>
+                            <span>7</span>
+                            <span>8</span>
+                            <span>9</span>
+                            <span>10</span>
+                          </div>
+                          <motion.button
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            onClick={() => submitJudgeScore(performer.id)}
+                            disabled={lockedScores[performer.id]}
+                            className={`w-full mt-3 py-2 rounded-lg text-white text-sm font-bold transition-all ${lockedScores[performer.id] ? 'bg-gray-600' : 'bg-gradient-to-r from-cyan-500 to-purple-500'}`}
+                          >
+                            {lockedScores[performer.id] ? 'Score Locked' : 'Lock Score'}
+                          </motion.button>
                         </div>
-                      </div>
+                      )}
 
-                      <motion.button
-                        whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.95 }}
-                        className="w-full mt-4 py-3 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-500 text-white font-bold transition-transform"
-                        onClick={() => {
-                          votePerformer(performer.id);
-                        }}
-                      >
-                        {votedPerformance == performer.id ? 'Voted' : 'Vote'}
-                      </motion.button>
+                      {/* Regular user voting UI - only show if not a judge */}
+                      {!isjudge && (
+                        <>
+                          <div className="mt-6">
+                            <div className="flex justify-between mb-1">
+                              <span className="text-gray-300 text-sm">Vote share</span>
+                              <span className="font-semibold text-sm">{getPercentage(performer.votes)}%</span>
+                            </div>
+                            <div className="w-full bg-gray-700 rounded-full h-2.5 mb-4 overflow-hidden">
+                              <motion.div
+                                className="h-full bg-gradient-to-r from-cyan-400 to-purple-500 rounded-full"
+                                initial={{ width: 0 }}
+                                animate={{ width: `${getPercentage(performer.votes)}%` }}
+                                transition={{ duration: 1, delay: index * 0.1 + 0.2 }}
+                              />
+                            </div>
+                          </div>
+
+                          <motion.button
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            className={`w-full mt-4 py-3 rounded-lg text-white font-bold transition-transform ${eventsVotingEnabled[selectedEvent] && votedPerformance && votedPerformance != null == performer.id ? 'bg-gradient-to-r from-cyan-500 to-purple-500' : 'bg-gray-500'} ${votedPerformance == performer.id ? 'bg-gradient-to-r from-cyan-500 to-purple-500' : ''} `}
+                            disabled={votedPerformance != null}
+                            onClick={() => {
+                              votePerformer(performer.id);
+                            }}
+                          >
+                            {votedPerformance == performer.id ? 'Voted' : 'Vote'}
+                          </motion.button>
+                        </>
+                      )}
                     </div>
                   </motion.div>
                 ))}
@@ -333,6 +459,11 @@ const Dashboard = () => {
                         <div className="flex items-center space-x-2">
                           <span className={`h-3 w-3 rounded-full ${teamColors[performer.team]}`}></span>
                           <span className="text-sm font-bold">{performer.votes} votes ({getPercentage(performer.votes)}%)</span>
+                          {isjudge && lockedScores[performer.id] && (
+                            <span className="text-sm font-bold text-cyan-400 ml-2">
+                              Your score: {judgeScores[performer.id]}/10
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="w-full bg-gray-700 rounded-full h-4 mb-2 overflow-hidden">
@@ -350,6 +481,17 @@ const Dashboard = () => {
             </motion.div>
           )}
         </AnimatePresence>
+        {isAdmin && selectedEvent &&
+          <motion.div
+            onClick={publishResults}
+            className="mt-7 cursor-pointer text-white mx-auto px-5 py-1.5 w-fit rounded-lg font-medium text-lg bg-gradient-to-r from-cyan-500 to-purple-500"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.6 }}
+          >
+            Publish result
+          </motion.div>
+        }
 
         <motion.footer
           className="mt-12 text-center text-sm text-gray-500"
